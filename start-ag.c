@@ -134,6 +134,10 @@ unsigned char populateConfig(FILE *cfgFile) {
 int main() {
 	char *cfgPath = getCfgPath();
 	FILE *cfgFile = fopen(cfgPath, "a");
+	
+	if (fseek(cfgFile, 0, SEEK_END) == 0 && ftell(cfgFile) == 0)
+		populateConfig(cfgFile);
+	rewind(cfgFile);
 
 	free(cfgPath);
 	return 0;
