@@ -10,11 +10,17 @@
 #define D 1
 #define F 2
 #define SSH_IGNORE_MAP_SIZE 4
+#define DEFAULT_AG_ID_NO 3
 
 typedef struct {
 	const char *name;
 	const char *sshId;
-} AgIdent;
+} AgentId;
+
+typedef struct {
+	size_t noIds;
+	AgentId **agentIds;
+} AgentIdCollection;
 
 const char *sshIgnoreMapSize[SSH_IGNORE_MAP_SIZE] = {
 	"agent",
@@ -22,6 +28,46 @@ const char *sshIgnoreMapSize[SSH_IGNORE_MAP_SIZE] = {
 	"known_hosts",
 	"known_hosts.old",
 };
+
+void initAgentIdColl(AgentIdCollection *coll);
+void addAgentId(const char *name, const char *sshId, AgentIdCollection *coll);
+void freeAgentIdColl(AgentIdCollection *coll);
+
+void makeIfMissing(const char *path, int type);
+char *getHomePath(size_t *outputLen);
+
+char *getCfgPath();
+unsigned char populateConfig(FILE *cfgFile);
+
+int main() {
+	char *cfgPath = getCfgPath();
+	FILE *cfgFile = fopen(cfgPath, "a");
+	
+	// TODO: Add some kind of logging in the
+	// TUI to inform the user that the config
+	// file has been populated with the default
+	// configuration.
+	if (fseek(cfgFile, 0, SEEK_END) == 0 && ftell(cfgFile) == 0)
+		populateConfig(cfgFile);
+	rewind(cfgFile);
+
+	AgentIdCollection *idColl = (AgentIdCollection *)calloc(1, sizeof(AgentIdCollection));
+
+	free(cfgPath);
+	return 0;
+}
+
+void initAgentIdColl(AgentIdCollection *coll) {
+	coll->noIds = DEFAULT_AG_ID_NO;
+	coll->agentIds = (AgentId **)calloc(coll->noIds, sizeof(AgentId **));
+}
+
+void addAgentId(const char *name, const char *sshId, AgentIdCollection *coll) {
+}
+
+void freeAgentIds(AgentId **agentIds) {
+
+}
 
 void makeIfMissing(const char *path, int type) {
 	if (type != F && type != D || access(path, R_OK) != -1) return;
@@ -128,17 +174,5 @@ unsigned char populateConfig(FILE *cfgFile) {
 	}
 
 	closedir(sshDir);
-	return 0;
-}
-
-int main() {
-	char *cfgPath = getCfgPath();
-	FILE *cfgFile = fopen(cfgPath, "a");
-	
-	if (fseek(cfgFile, 0, SEEK_END) == 0 && ftell(cfgFile) == 0)
-		populateConfig(cfgFile);
-	rewind(cfgFile);
-
-	free(cfgPath);
 	return 0;
 }
