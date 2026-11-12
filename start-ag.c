@@ -104,6 +104,7 @@ unsigned char populateConfig(FILE *cfgFile) {
 	sprintf(sshPathBuff, sshPathFormatStr, homePath);
 	
 	makeIfMissing(sshPathBuff, D);
+
 	DIR *sshDir = opendir(sshPathBuff);
 	free(sshPathBuff);
 	struct dirent *entry;
@@ -112,22 +113,27 @@ unsigned char populateConfig(FILE *cfgFile) {
 		char *entryName = entry->d_name;
 		// Ignore public keys
 		if (strstr(entryName, ".pub") != NULL) continue;
+		// Ignore relative directories
+		if (strncmp(entryName, "..", 2) == 0 || strncmp(entryName, ".", 1) == 0) continue;
 
 		// Ignore known non-id files
 		size_t i = 0;
-		for (; strncmp(entryName, sshIgnoreMapSize[i], strlen(sshIgnoreMapSize[i])) && i < SSH_IGNORE_MAP_SIZE; i++);
+		for (;
+			strncmp(entryName, sshIgnoreMapSize[i], strlen(sshIgnoreMapSize[i])) != 0 &&
+			i < SSH_IGNORE_MAP_SIZE;
+			i++);
 		if (i < SSH_IGNORE_MAP_SIZE) continue;
 
-		sprintf(sshIdMapFormatStr);
+		fprintf(cfgFile, sshIdMapFormatStr, entryName, entryName);
 	}
 
 	closedir(sshDir);
-	free(sshPathBuff);
 	return 0;
 }
 
 int main() {
 	char *cfgPath = getCfgPath();
+	FILE *cfgFile = fopen(cfgPath, "a");
 
 	free(cfgPath);
 	return 0;
