@@ -19,6 +19,7 @@ typedef struct {
 
 typedef struct {
 	size_t noIds;
+	size_t maxIds;
 	AgentId **agentIds;
 } AgentIdCollection;
 
@@ -30,28 +31,31 @@ const char *sshIgnoreMapSize[SSH_IGNORE_MAP_SIZE] = {
 };
 
 void initAgentIdColl(AgentIdCollection *coll);
-void addAgentId(const char *name, const char *sshId, AgentIdCollection *coll);
+AgentId *searchAgentId(AgentIdCollection *coll, const char *name);
+unsigned char addAgentId(const char *name, const char *sshId, AgentIdCollection *coll);
 void freeAgentIdColl(AgentIdCollection *coll);
 
 void makeIfMissing(const char *path, int type);
 char *getHomePath(size_t *outputLen);
 
 char *getCfgPath();
-unsigned char populateConfig(FILE *cfgFile);
+unsigned char populateConfig(FILE *cfgFile, AgentIdCollection *coll);
 
 int main() {
 	char *cfgPath = getCfgPath();
 	FILE *cfgFile = fopen(cfgPath, "a");
+	
+	AgentIdCollection *idColl = (AgentIdCollection *)calloc(1, sizeof(AgentIdCollection));
+	initAgentIdColl(idColl);
 	
 	// TODO: Add some kind of logging in the
 	// TUI to inform the user that the config
 	// file has been populated with the default
 	// configuration.
 	if (fseek(cfgFile, 0, SEEK_END) == 0 && ftell(cfgFile) == 0)
-		populateConfig(cfgFile);
+		populateConfig(cfgFile, idColl);
 	rewind(cfgFile);
 
-	AgentIdCollection *idColl = (AgentIdCollection *)calloc(1, sizeof(AgentIdCollection));
 
 	free(cfgPath);
 	return 0;
@@ -62,15 +66,42 @@ void initAgentIdColl(AgentIdCollection *coll) {
 	coll->agentIds = (AgentId **)calloc(coll->noIds, sizeof(AgentId **));
 }
 
-void addAgentId(const char *name, const char *sshId, AgentIdCollection *coll) {
+AgentId *searchAgentId(AgentIdCollection *coll, const char *name) {
+	AgentId *targetAgentId = NULL, *currentAgentId;
+
+	for (size_t i = 0; i < coll->noIds; i++) {
+		currentAgentId = coll->agentIds[i];
+		if (strncmp(name, currentAgentId->name, strlen(currentAgentId->name)) == 0) {
+			targetAgentId = currentAgentId;
+			break;
+		}
+	}
+
+	return targetAgentId;
 }
 
-void freeAgentIds(AgentId **agentIds) {
+unsigned char addAgentId(const char *name, const char *sshId, AgentIdCollection *coll) {
+	if (searchAgentId(coll, name) != NULL) return 1;
 
+	AgentId *newAgent = (AgentId *)calloc(1, sizeof(AgentId *));
+	newAgent->name = name;
+	newAgent->sshId = sshId;
+	if (coll->noIds == coll->maxIds) {
+		coll->agentIds = reallocarray(coll->agentIds, ++coll->noIds, sizeof(AgentId **));
+		coll->maxIds = coll->noIds;
+	}
+	coll->agentIds[coll->noIds] = newAgent;
+	return 0;
+}
+
+void freeAgentIdColl(AgentIdCollection *coll) {
+	for (size_t i = 0; i < coll->noIds; i++)
+		free(coll->agentIds[i]);
+	free(coll);
 }
 
 void makeIfMissing(const char *path, int type) {
-	if (type != F && type != D || access(path, R_OK) != -1) return;
+	if ((type != F && type != D) || access(path, R_OK) != -1) return;
 
 	const char *makeFormatStr = type == F
 		? "touch %s"
@@ -131,7 +162,7 @@ char *getCfgPath() {
 	return cfgPathBuffer;
 }
 
-unsigned char populateConfig(FILE *cfgFile) {
+unsigned char populateConfig(FILE *cfgFile, AgentIdCollection *coll) {
 	if (cfgFile == NULL) {
 		fprintf(stderr,
 		  "\033[38:5:124m[ERROR]\033[m: unable to open the configuration file. "
@@ -170,6 +201,7 @@ unsigned char populateConfig(FILE *cfgFile) {
 			i++);
 		if (i < SSH_IGNORE_MAP_SIZE) continue;
 
+		addAgentId(const char *name, const char *sshId, AgentIdCollection *coll)
 		fprintf(cfgFile, sshIdMapFormatStr, entryName, entryName);
 	}
 
