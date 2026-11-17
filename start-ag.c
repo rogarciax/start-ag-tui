@@ -1,5 +1,4 @@
 #include <ncurses.h>
-#include <stdio.h>
 #include <dirent.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -22,8 +21,8 @@ typedef struct {
 typedef struct {
 	size_t noIds;
 	size_t maxIds;
-	AgentId **agentIds;
 	unsigned char modified;
+	AgentId **agentIds;
 } AgentIdCollection;
 
 const char *sshIgnoreMapSize[SSH_IGNORE_MAP_SIZE] = {
@@ -36,7 +35,7 @@ const char *sshIgnoreMapSize[SSH_IGNORE_MAP_SIZE] = {
 AgentIdCollection *genAgentIdColl();
 AgentId *searchAgentId(AgentIdCollection *coll, const char *sshId);
 unsigned char addAgentId(const char *name, const char *sshId, AgentIdCollection *coll);
-void freeAgentIdColl(AgentIdCollection *coll);
+void freeAgentIdColl(FILE *cfgFile, AgentIdCollection *coll);
 
 void makeIfMissing(const char *path, int type);
 char *getHomePath(size_t *outputLen);
@@ -47,31 +46,42 @@ unsigned char parseConfig(FILE *cfgFile, AgentIdCollection *coll);
 
 int main() {
 	char *cfgPath = getCfgPath();
+	size_t cfgPathLen = strlen(cfgPath);
 	FILE *cfgFile = fopen(cfgPath, "a+");
 	
 	AgentIdCollection *idColl = genAgentIdColl();
-	
+	char *initMsg = (char *)calloc(1, 1024);
+;
 	// TODO: Add some kind of logging in the
 	// TUI to inform the user that the config
 	// file has been populated with the default
 	// configuration.
-	if (fseek(cfgFile, 0, SEEK_END) == 0 && ftell(cfgFile) == 0)
+	if (fseek(cfgFile, 0, SEEK_END) == 0 && ftell(cfgFile) == 0) {
 		populateConfig(cfgFile, idColl);
+		strncpy(initMsg, "Populated config file with default values at: ", 47);
+	}
 	rewind(cfgFile);
 
 	if (idColl->noIds == 0) {
 		parseConfig(cfgFile, idColl);
+		strncpy(initMsg, "Loaded found ssh ids at: ", 70);
 	}
+	strncat(initMsg, cfgPath, cfgPathLen);
 
+	printf("\033[38:5:70m%s\033[m\n", initMsg);
+	free(initMsg);
+
+	freeAgentIdColl(cfgFile, idColl);
 	free(cfgPath);
+	fclose(cfgFile);
 	return 0;
 }
 
 AgentIdCollection *genAgentIdColl() {
-	AgentIdCollection *coll = (AgentIdCollection *)calloc(1, sizeof(AgentIdCollection *));
-	coll->noIds = 0;
+	AgentIdCollection *coll = (AgentIdCollection *)calloc(1, sizeof(AgentIdCollection));
+	coll->noIds = coll->modified = 0;
 	coll->maxIds = DEFAULT_AG_ID_NO;
-	coll->agentIds = (AgentId **)calloc(coll->noIds, sizeof(AgentId **));
+	coll->agentIds = (AgentId **)calloc(coll->maxIds, sizeof(AgentId *));
 	return coll;
 }
 
@@ -91,7 +101,7 @@ AgentId *searchAgentId(AgentIdCollection *coll, const char *sshId) {
 unsigned char addAgentId(const char *name, const char *sshId, AgentIdCollection *coll) {
 	if (searchAgentId(coll, name) != NULL) return 1;
 
-	AgentId *newAgent = (AgentId *)calloc(1, sizeof(AgentId *));
+	AgentId *newAgent = (AgentId *)calloc(1, sizeof(AgentId));
 	newAgent->name = name;
 	newAgent->sshId = sshId;
 
@@ -104,9 +114,16 @@ unsigned char addAgentId(const char *name, const char *sshId, AgentIdCollection 
 	return 0;
 }
 
-void freeAgentIdColl(AgentIdCollection *coll) {
-	for (size_t i = 0; i < coll->noIds; i++)
-		free(coll->agentIds[i]);
+void freeAgentIdColl(FILE *cfgFile, AgentIdCollection *coll) {
+	AgentId *current;
+	unsigned char mod = coll->modified;
+	if (mod) cfgFile = freopen(NULL, "w", cfgFile);
+
+	for (size_t i = 0; i < coll->noIds; i++) {
+		current = coll->agentIds[i];
+		if (mod) fprintf(cfgFile, ENTRY_FORMAT_STR, current->name, current->sshId);
+		free(current);
+	}
 	free(coll);
 }
 
@@ -211,8 +228,8 @@ unsigned char populateConfig(FILE *cfgFile, AgentIdCollection *coll) {
 			i++);
 		if (i < SSH_IGNORE_MAP_SIZE) continue;
 
-		addAgentId(entryName, entryName, coll);
 		fprintf(cfgFile, ENTRY_FORMAT_STR, entryName, entryName);
+		addAgentId(entryName, entryName, coll);
 	}
 
 	closedir(sshDir);
@@ -220,20 +237,17 @@ unsigned char populateConfig(FILE *cfgFile, AgentIdCollection *coll) {
 }
 
 unsigned char parseConfig(FILE *cfgFile, AgentIdCollection *coll) {
-	// ':' + \n = 2
+	// ':' + '\0' = 2
 	size_t maxLength = 2 * ENTRY_ID_MAX + 2;
-	char *line = (char *)calloc(1, maxLength), 
-		 *name, *sshId, tmp;
+	char *line = (char *)calloc(1, maxLength);
+	char *name, *sshId;
 
 	while (getline(&line, &maxLength, cfgFile) != EOF) {
 		name = strtok(line, ":");
-		tmp = strtok(line, NULL);
-		strncpy(sshId, tmp, strlen(tmp)-1);
-		printf("Found entry: "ENTRY_FORMAT_STR, name, sshId);
-		memset(name, 0, ENTRY_ID_MAX);
-		memset(sshId, 0, ENTRY_ID_MAX);
+		sshId = strtok(NULL, "\n");
+		addAgentId(name, sshId, coll);
 	}
 
-	free(name); free(sshId);
+	free(line);
 	return 0;
 }
