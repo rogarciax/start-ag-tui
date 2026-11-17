@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
 
 // Macro defined at: https://github.com/mcdaniel/curses_tutorial#colors
 #define RGB_TO_CURSES(x) ((int)((float)x*3.90625))  // 1000/256 conversion
@@ -21,6 +22,8 @@ typedef struct {
 typedef struct {
 	size_t noIds;
 	size_t maxIds;
+	size_t maxNameLen;
+	size_t maxSshIdLen;
 	unsigned char modified;
 	AgentId **agentIds;
 } AgentIdCollection;
@@ -29,12 +32,14 @@ const char *sshIgnoreMapSize[SSH_IGNORE_MAP_SIZE] = {
 	"agent",
 	"authorized_keys",
 	"known_hosts",
-	"known_hosts.old",
+	"known_hosts.old"
 };
 
 AgentIdCollection *genAgentIdColl();
 AgentId *searchAgentId(AgentIdCollection *coll, const char *sshId);
+void updateMaxSizes(const char *newName, const char *newSshId, AgentIdCollection *coll);
 unsigned char addAgentId(const char *name, const char *sshId, AgentIdCollection *coll);
+unsigned char editAgentId(const char *oldSshId, const char *newName, const char *newSshId, AgentIdCollection *coll);
 void freeAgentIdColl(FILE *cfgFile, AgentIdCollection *coll);
 
 void makeIfMissing(const char *path, int type);
@@ -51,8 +56,9 @@ int main() {
 	
 	AgentIdCollection *idColl = genAgentIdColl();
 	char *initMsg = (char *)calloc(1, 1024);
-;
-	// TODO: Add some kind of logging in the
+
+	WINDOW *idSelectionWin;
+
 	// TUI to inform the user that the config
 	// file has been populated with the default
 	// configuration.
@@ -64,12 +70,9 @@ int main() {
 
 	if (idColl->noIds == 0) {
 		parseConfig(cfgFile, idColl);
-		strncpy(initMsg, "Loaded found ssh ids at: ", 70);
+		strncpy(initMsg, "Loaded found ssh ids at: ", 26);
 	}
 	strncat(initMsg, cfgPath, cfgPathLen);
-
-	printf("\033[38:5:70m%s\033[m\n", initMsg);
-	free(initMsg);
 
 	freeAgentIdColl(cfgFile, idColl);
 	free(cfgPath);
@@ -80,12 +83,15 @@ int main() {
 AgentIdCollection *genAgentIdColl() {
 	AgentIdCollection *coll = (AgentIdCollection *)calloc(1, sizeof(AgentIdCollection));
 	coll->noIds = coll->modified = 0;
+	coll->maxNameLen = coll->maxSshIdLen = 0;
 	coll->maxIds = DEFAULT_AG_ID_NO;
 	coll->agentIds = (AgentId **)calloc(coll->maxIds, sizeof(AgentId *));
 	return coll;
 }
 
 AgentId *searchAgentId(AgentIdCollection *coll, const char *sshId) {
+	assert(strlen(sshId) <= ENTRY_ID_MAX);
+
 	AgentId *target, *current;
 	target = current = NULL;
 
@@ -98,18 +104,40 @@ AgentId *searchAgentId(AgentIdCollection *coll, const char *sshId) {
 	return target;
 }
 
+void updateMaxSizes(const char *newName, const char *newSshId, AgentIdCollection *coll) {
+	size_t nameLen = strlen(newName);
+	size_t sshIdLen = strlen(newSshId);
+
+	if (nameLen > coll->maxNameLen) coll->maxNameLen = nameLen;
+	if (sshIdLen > coll->maxSshIdLen) coll->maxSshIdLen = sshIdLen;
+}
+
+unsigned char editAgentId(const char *oldSshId, const char *newName, const char *newSshId, AgentIdCollection *coll) {
+	AgentId *foundId;
+	if ((foundId = searchAgentId(coll, oldSshId)) == NULL) return 1;
+	assert(strlen(newName) <= ENTRY_ID_MAX && strlen(newSshId) <= ENTRY_ID_MAX);
+
+	foundId->name = newName;
+	foundId->sshId = newSshId;
+	updateMaxSizes(newName, newSshId, coll);
+	return 0;
+}
+
 unsigned char addAgentId(const char *name, const char *sshId, AgentIdCollection *coll) {
 	if (searchAgentId(coll, name) != NULL) return 1;
 
 	AgentId *newAgent = (AgentId *)calloc(1, sizeof(AgentId));
-	newAgent->name = name;
-	newAgent->sshId = sshId;
+	size_t nameLen, sshIdLen;
+
+	newAgent->name = name; nameLen = strlen(name);
+	newAgent->sshId = sshId; sshIdLen = strlen(sshId);
 
 	if (coll->noIds == coll->maxIds) {
-		coll->agentIds = reallocarray(coll->agentIds, coll->noIds+1, sizeof(AgentId **));
+		coll->agentIds = reallocarray(coll->agentIds, coll->noIds+1, sizeof(AgentId *));
 		coll->maxIds = coll->noIds;
 	}
 
+	updateMaxSizes(name, sshId, coll);
 	coll->agentIds[coll->noIds++] = newAgent;
 	return 0;
 }
