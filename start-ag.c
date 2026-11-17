@@ -11,6 +11,8 @@
 #define F 2
 #define SSH_IGNORE_MAP_SIZE 4
 #define DEFAULT_AG_ID_NO 3
+#define ENTRY_FORMAT_STR "%s:%s\n"
+#define ENTRY_ID_MAX 256
 
 typedef struct {
 	const char *name;
@@ -21,6 +23,7 @@ typedef struct {
 	size_t noIds;
 	size_t maxIds;
 	AgentId **agentIds;
+	unsigned char modified;
 } AgentIdCollection;
 
 const char *sshIgnoreMapSize[SSH_IGNORE_MAP_SIZE] = {
@@ -40,10 +43,11 @@ char *getHomePath(size_t *outputLen);
 
 char *getCfgPath();
 unsigned char populateConfig(FILE *cfgFile, AgentIdCollection *coll);
+unsigned char parseConfig(FILE *cfgFile, AgentIdCollection *coll);
 
 int main() {
 	char *cfgPath = getCfgPath();
-	FILE *cfgFile = fopen(cfgPath, "a");
+	FILE *cfgFile = fopen(cfgPath, "a+");
 	
 	AgentIdCollection *idColl = genAgentIdColl();
 	
@@ -55,7 +59,9 @@ int main() {
 		populateConfig(cfgFile, idColl);
 	rewind(cfgFile);
 
-	printf("%zu\n", idColl->noIds);
+	if (idColl->noIds == 0) {
+		parseConfig(cfgFile, idColl);
+	}
 
 	free(cfgPath);
 	return 0;
@@ -177,7 +183,6 @@ unsigned char populateConfig(FILE *cfgFile, AgentIdCollection *coll) {
 	}
 
 	const char *sshPathFormatStr = "%s.ssh/";
-	const char *sshIdMapFormatStr = "%s:%s\n";
 
 	size_t homePathLen;
 	char *homePath = getHomePath(&homePathLen);
@@ -207,9 +212,28 @@ unsigned char populateConfig(FILE *cfgFile, AgentIdCollection *coll) {
 		if (i < SSH_IGNORE_MAP_SIZE) continue;
 
 		addAgentId(entryName, entryName, coll);
-		fprintf(cfgFile, sshIdMapFormatStr, entryName, entryName);
+		fprintf(cfgFile, ENTRY_FORMAT_STR, entryName, entryName);
 	}
 
 	closedir(sshDir);
+	return 0;
+}
+
+unsigned char parseConfig(FILE *cfgFile, AgentIdCollection *coll) {
+	// ':' + \n = 2
+	size_t maxLength = 2 * ENTRY_ID_MAX + 2;
+	char *line = (char *)calloc(1, maxLength), 
+		 *name, *sshId, tmp;
+
+	while (getline(&line, &maxLength, cfgFile) != EOF) {
+		name = strtok(line, ":");
+		tmp = strtok(line, NULL);
+		strncpy(sshId, tmp, strlen(tmp)-1);
+		printf("Found entry: "ENTRY_FORMAT_STR, name, sshId);
+		memset(name, 0, ENTRY_ID_MAX);
+		memset(sshId, 0, ENTRY_ID_MAX);
+	}
+
+	free(name); free(sshId);
 	return 0;
 }
