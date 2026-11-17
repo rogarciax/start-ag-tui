@@ -30,8 +30,8 @@ const char *sshIgnoreMapSize[SSH_IGNORE_MAP_SIZE] = {
 	"known_hosts.old",
 };
 
-void initAgentIdColl(AgentIdCollection *coll);
-AgentId *searchAgentId(AgentIdCollection *coll, const char *name);
+AgentIdCollection *genAgentIdColl();
+AgentId *searchAgentId(AgentIdCollection *coll, const char *sshId);
 unsigned char addAgentId(const char *name, const char *sshId, AgentIdCollection *coll);
 void freeAgentIdColl(AgentIdCollection *coll);
 
@@ -45,8 +45,7 @@ int main() {
 	char *cfgPath = getCfgPath();
 	FILE *cfgFile = fopen(cfgPath, "a");
 	
-	AgentIdCollection *idColl = (AgentIdCollection *)calloc(1, sizeof(AgentIdCollection));
-	initAgentIdColl(idColl);
+	AgentIdCollection *idColl = genAgentIdColl();
 	
 	// TODO: Add some kind of logging in the
 	// TUI to inform the user that the config
@@ -56,28 +55,31 @@ int main() {
 		populateConfig(cfgFile, idColl);
 	rewind(cfgFile);
 
+	printf("%zu\n", idColl->noIds);
 
 	free(cfgPath);
 	return 0;
 }
 
-void initAgentIdColl(AgentIdCollection *coll) {
-	coll->noIds = DEFAULT_AG_ID_NO;
+AgentIdCollection *genAgentIdColl() {
+	AgentIdCollection *coll = (AgentIdCollection *)calloc(1, sizeof(AgentIdCollection *));
+	coll->noIds = 0;
+	coll->maxIds = DEFAULT_AG_ID_NO;
 	coll->agentIds = (AgentId **)calloc(coll->noIds, sizeof(AgentId **));
+	return coll;
 }
 
-AgentId *searchAgentId(AgentIdCollection *coll, const char *name) {
-	AgentId *targetAgentId = NULL, *currentAgentId;
+AgentId *searchAgentId(AgentIdCollection *coll, const char *sshId) {
+	AgentId *target, *current;
+	target = current = NULL;
 
-	for (size_t i = 0; i < coll->noIds; i++) {
-		currentAgentId = coll->agentIds[i];
-		if (strncmp(name, currentAgentId->name, strlen(currentAgentId->name)) == 0) {
-			targetAgentId = currentAgentId;
-			break;
-		}
+	for (size_t i = 0; target == NULL && i < coll->noIds; i++) {
+		current = coll->agentIds[i];
+		if (strncmp(sshId, current->sshId, strlen(current->sshId)) == 0)
+			target = current;
 	}
 
-	return targetAgentId;
+	return target;
 }
 
 unsigned char addAgentId(const char *name, const char *sshId, AgentIdCollection *coll) {
@@ -86,11 +88,13 @@ unsigned char addAgentId(const char *name, const char *sshId, AgentIdCollection 
 	AgentId *newAgent = (AgentId *)calloc(1, sizeof(AgentId *));
 	newAgent->name = name;
 	newAgent->sshId = sshId;
+
 	if (coll->noIds == coll->maxIds) {
-		coll->agentIds = reallocarray(coll->agentIds, ++coll->noIds, sizeof(AgentId **));
+		coll->agentIds = reallocarray(coll->agentIds, coll->noIds+1, sizeof(AgentId **));
 		coll->maxIds = coll->noIds;
 	}
-	coll->agentIds[coll->noIds] = newAgent;
+
+	coll->agentIds[coll->noIds++] = newAgent;
 	return 0;
 }
 
@@ -107,8 +111,9 @@ void makeIfMissing(const char *path, int type) {
 		? "touch %s"
 		: "mkdir -p %s";
 
+	// -2 for %s + 1 for \0 = -1
 	char *makeCmd = (char *)malloc(
-		strlen(makeFormatStr) - 2 + strlen(path)
+		strlen(makeFormatStr) - 1 + strlen(path)
 	);
 
 	sprintf(makeCmd, makeFormatStr, path);
@@ -121,7 +126,7 @@ char *getHomePath(size_t *outputLen) {
 	const char *userHomeFormatStr = "/home/%s/";
 
 	char *loginName = getlogin();
-	size_t homePathLen = strlen(userHomeFormatStr) - 2 + strlen(loginName);
+	size_t homePathLen = strlen(userHomeFormatStr) - 1 + strlen(loginName);
 	char *homePathBuff = (char *)malloc(homePathLen);
 
 	sprintf(homePathBuff, userHomeFormatStr, loginName);
@@ -132,7 +137,7 @@ char *getHomePath(size_t *outputLen) {
 
 char *getCfgPath() {
 	const char *configDirPath = ".config/start-ag/";
-	const char *configFilePath = "config";
+	const char *configFilePath = "agents";
 
 	size_t configDirLen = strlen(configDirPath);
 	size_t configFileLen = strlen(configFilePath);
@@ -201,7 +206,7 @@ unsigned char populateConfig(FILE *cfgFile, AgentIdCollection *coll) {
 			i++);
 		if (i < SSH_IGNORE_MAP_SIZE) continue;
 
-		addAgentId(const char *name, const char *sshId, AgentIdCollection *coll)
+		addAgentId(entryName, entryName, coll);
 		fprintf(cfgFile, sshIdMapFormatStr, entryName, entryName);
 	}
 
