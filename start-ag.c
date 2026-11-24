@@ -45,6 +45,9 @@
 #define FOCUSED_WCHAR L"◉"
 #define UNFOCUSED_WCHAR L"◎"
 #define ELIPSIS_WCHAR L"…"
+#define DOC_WCHAR L"🗎"
+
+#define PAGE_SIZE 2
 
 #define ENTER_KEY 10
 
@@ -84,6 +87,8 @@ wchar_t *windowTitles[] = {
 	L"🛈 Info",
 	NULL
 };
+
+size_t currentPage = 0, totalPages;
 
 AgentIdCollection *genAgentIdColl();
 AgentId *searchAgentId(AgentIdCollection *coll, const char *sshId);
@@ -146,9 +151,11 @@ int main() {
 	}
 	strncat(infoMsg, cfgPath, cfgPathLen);
 
+	totalPages = ceil((1.0f * PAGE_SIZE) / idColl->noIds);
+
 	const char *ctrlsMsg = "Move UP/DOWN, select ENTER, quit Q";
 	minCols = titlesMaxWidth() + ENTRY_PADDING;
-	minRows = 2 + idColl->noIds; // Temp implementation assuming 2/3 agents (+2 for borders)
+	minRows = 2 + PAGE_SIZE; // Temp implementation assuming 2/3 agents (+2 for borders)
 
 	do {
 		clear();
@@ -156,7 +163,10 @@ int main() {
 
 		if (key == KEY_DOWN) idColl->selected++;
 		if (key == KEY_UP) idColl->selected--;
+		if (key == KEY_RIGHT) currentPage++;
+		if (key == KEY_LEFT) currentPage--;
 		idColl->selected %= idColl->noIds;
+		currentPage %= PAGE_SIZE;
 
 		if (key == ENTER_KEY) {
 			addSshId(idColl->agentIds[idColl->selected]);
@@ -190,6 +200,10 @@ int main() {
 		printIds(selIdWin, idColl);
 		addPredBorder(selIdWin, DECORATED_ROUNDED, SELECT_ID_PAIR);
 		addWTitle(selIdWin, windowTitles[SELECT_ID_TITLE], SELECT_ID_PAIR);
+		if (idColl->noIds > PAGE_SIZE) {
+			mvwaddwstr(selIdWin, minRows-1, 1, DOC_WCHAR);
+			mvwprintw(selIdWin, minRows-1, 2, "  %zu/%zu", currentPage+1, totalPages+1);
+		}
 
 		infoWin = derwin(container, infoMsgRows, containerCols, ctrlsMsgRows+minRows, 0);
 		printWrappedStr(infoWin, infoMsg, WHITE_PAIR);
@@ -201,6 +215,7 @@ int main() {
 
 	freeAgentIdColl(cfgFile, idColl);
 	free(cfgPath);
+	free(infoMsg);
 	fclose(cfgFile);
 	endCurses();
 	return 0;
@@ -490,8 +505,8 @@ void printIds(WINDOW *win, AgentIdCollection *coll) {
 	size_t currentNameLen, currentSshIdLen;
 	AgentId *current;
 
-	for (size_t i = 0; i < coll->noIds; i++) {
-		current = coll->agentIds[i];
+	for (size_t i = 0; i < PAGE_SIZE*(totalPages-currentPage+1); i++) {
+		current = coll->agentIds[i+currentPage*PAGE_SIZE];
 		currentNameLen = strlen(current->name);
 		currentSshIdLen = strlen(current->sshId);
 		wattr_set(win, WA_NORMAL, i == coll->selected ? FOCUSED_PAIR : UNFOCUSED_PAIR, NULL);
