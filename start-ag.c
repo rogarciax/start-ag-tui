@@ -41,6 +41,7 @@
 #define INFO_PAIR 		4
 #define FOCUSED_PAIR	5
 #define UNFOCUSED_PAIR	6
+#define INVERTED_PAIR	7
 
 #define FOCUSED_WCHAR L"◉"
 #define UNFOCUSED_WCHAR L"◎"
@@ -77,7 +78,6 @@ typedef enum wstyle { ROUNDED, DECORATED_ROUNDED } BORDER_STYLE;
 const wchar_t *borderCharacters[][8] = {
 	{ L"│", L"│", L"─", L"─", L"╭", L"╮", L"╰", L"╯" },
 	{ L"│", L"│", L"═", L"═", L"╭", L"╮", L"╰", L"╯" },
-	NULL
 };
 
 typedef enum title { CTRLS_TITLE, SELECT_ID_TITLE, INFO_TITLE } WINDOW_TITLE;
@@ -85,10 +85,10 @@ wchar_t *windowTitles[] = {
 	L"🎮Controls",
 	L"⚉ Select ID",
 	L"🛈 Info",
-	NULL
+	(wchar_t *) NULL
 };
 
-size_t currentPage = 0, totalPages;
+size_t currentPage = 0, totalPages = 0;
 
 AgentIdCollection *genAgentIdColl();
 AgentId *searchAgentId(AgentIdCollection *coll, const char *sshId);
@@ -130,7 +130,6 @@ int main() {
 	AgentIdCollection *idColl = genAgentIdColl();
 	char *infoMsg = (char *)calloc(1, 1024);
 
-	int key;
 	int rows, cols;
 	size_t minCols, minRows;
 	size_t ctrlsMsgRows, infoMsgRows;
@@ -138,6 +137,8 @@ int main() {
 	size_t fitRows;
 	WINDOW *container;
 	WINDOW *ctrlsWin, *selIdWin, *infoWin;
+
+	char *newNameBuff, *newSshIdBuff;
 
 	if (fseek(cfgFile, 0, SEEK_END) == 0 && ftell(cfgFile) == 0) {
 		populateConfig(cfgFile, idColl);
@@ -151,9 +152,9 @@ int main() {
 	}
 	strncat(infoMsg, cfgPath, cfgPathLen);
 
-	totalPages = ceil((1.0f * PAGE_SIZE) / idColl->noIds);
-
-	const char *ctrlsMsg = "Move UP/DOWN, select ENTER, quit Q";
+	int key = 0;
+	const char *ctrlsMsg = "Move ARROW KEYS; select ENTER; quit Q; A new agent; E edit agent";
+	totalPages = ceil((1.0f * idColl->noIds) / PAGE_SIZE);
 	minCols = titlesMaxWidth() + ENTRY_PADDING;
 	minRows = 2 + PAGE_SIZE; // Temp implementation assuming 2/3 agents (+2 for borders)
 
@@ -165,12 +166,51 @@ int main() {
 		if (key == KEY_UP) idColl->selected--;
 		if (key == KEY_RIGHT) currentPage++;
 		if (key == KEY_LEFT) currentPage--;
-		idColl->selected %= idColl->noIds;
-		currentPage %= PAGE_SIZE;
+		idColl->selected %= PAGE_SIZE;
+		currentPage %= totalPages;
 
 		if (key == ENTER_KEY) {
-			addSshId(idColl->agentIds[idColl->selected]);
+			addSshId(idColl->agentIds[idColl->selected*PAGE_SIZE]);
 			break;
+		}
+
+		// The default is going to be ed25519, the best way to implement
+		// this is through a form with a menu.
+		if (key == 'a') {
+			attr_set(WA_NORMAL, INVERTED_PAIR, NULL);
+			mvprintw(rows-1, 0, "Name of the new identity: ");
+			attr_set(WA_NORMAL, WHITE_PAIR, NULL);
+			addch(' ');
+
+			newNameBuff = (char *)calloc(1, ENTRY_ID_MAX);
+			echo();
+			curs_set(1);
+			getstr(newNameBuff);
+			noecho();
+			curs_set(0);
+			
+			move(rows-1, 0);
+			clrtoeol();
+			attr_set(WA_NORMAL, INVERTED_PAIR, NULL);
+			mvprintw(rows-1, 0, "SshId of the new identity: ");
+			attr_set(WA_NORMAL, WHITE_PAIR, NULL);
+			addch(' ');
+
+			newSshIdBuff = (char *)calloc(1, ENTRY_ID_MAX);
+			echo();
+			curs_set(1);
+			getstr(newSshIdBuff);
+			noecho();
+			curs_set(0);
+
+			addAgentId(newNameBuff, newSshIdBuff, idColl);
+
+			free(newNameBuff); free(newSshIdBuff);
+			totalPages = ceil((1.0f * idColl->noIds) / PAGE_SIZE);
+		}
+
+		if (key == 'e') {
+
 		}
 
 		containerCols = cols / 3;
@@ -180,7 +220,7 @@ int main() {
 
 		fitRows = minRows + ctrlsMsgRows + infoMsgRows;
 
-		if (rows < fitRows || containerCols < minCols) {
+		if (rows < (int) fitRows || containerCols < minCols) {
 			printw("Not enough space.");
 			continue;
 		}
@@ -202,7 +242,7 @@ int main() {
 		addWTitle(selIdWin, windowTitles[SELECT_ID_TITLE], SELECT_ID_PAIR);
 		if (idColl->noIds > PAGE_SIZE) {
 			mvwaddwstr(selIdWin, minRows-1, 1, DOC_WCHAR);
-			mvwprintw(selIdWin, minRows-1, 2, "  %zu/%zu", currentPage+1, totalPages+1);
+			mvwprintw(selIdWin, minRows-1, 2, "  %zu/%zu", currentPage+1, totalPages);
 		}
 
 		infoWin = derwin(container, infoMsgRows, containerCols, ctrlsMsgRows+minRows, 0);
@@ -284,7 +324,7 @@ unsigned char addAgentId(const char *name, const char *sshId, AgentIdCollection 
 	newAgent->sshId = (char *)calloc(1, sshIdLen+1);
 
 	strncpy(newAgent->name, name, nameLen);
-	strncpy(newAgent->sshId, name, nameLen);
+	strncpy(newAgent->sshId, sshId, nameLen);
 
 	if (coll->noIds == coll->maxIds) {
 		coll->agentIds = reallocarray(coll->agentIds, coll->noIds+1, sizeof(AgentId *));
@@ -466,6 +506,7 @@ void initColorPairs() {
 	init_pair(INFO_PAIR, COLOR_LIGHT_PINK, COLOR_BLACK);
 	init_pair(FOCUSED_PAIR, COLOR_LIGHT_BLUE, COLOR_BLACK);
 	init_pair(UNFOCUSED_PAIR, COLOR_GRAY, COLOR_BLACK);
+	init_pair(INVERTED_PAIR, COLOR_BLACK, COLOR_WHITE);
 }
 
 void addPredBorder(WINDOW *win, BORDER_STYLE border, short colorPair) {
@@ -494,7 +535,7 @@ void printWrappedStr(WINDOW *win, char *str, short colorPair) {
 
 	availableCols = getmaxx(win) - 2; // -2 to account for borders
 
-	for (size_t i = 0; i < getmaxy(win)-2; i++)
+	for (size_t i = 0; (int) i < getmaxy(win)-2; i++)
 		mvwaddnstr(win, i+1, 1, str+i*availableCols, availableCols);
 }
 
@@ -505,7 +546,7 @@ void printIds(WINDOW *win, AgentIdCollection *coll) {
 	size_t currentNameLen, currentSshIdLen;
 	AgentId *current;
 
-	for (size_t i = 0; i < PAGE_SIZE*(totalPages-currentPage+1); i++) {
+	for (size_t i = 0; (int) i < min(PAGE_SIZE, coll->noIds-currentPage*PAGE_SIZE); i++) {
 		current = coll->agentIds[i+currentPage*PAGE_SIZE];
 		currentNameLen = strlen(current->name);
 		currentSshIdLen = strlen(current->sshId);
