@@ -46,9 +46,11 @@
 #define UNFOCUSED_WCHAR L"◎"
 #define ELIPSIS_WCHAR L"…"
 
+#define ENTER_KEY 10
+
 typedef struct {
-	const char *name;
-	const char *sshId;
+	char *name;
+	char *sshId;
 } AgentId;
 
 typedef struct {
@@ -88,6 +90,8 @@ AgentId *searchAgentId(AgentIdCollection *coll, const char *sshId);
 void updateMaxSizes(const char *newName, const char *newSshId, AgentIdCollection *coll);
 unsigned char addAgentId(const char *name, const char *sshId, AgentIdCollection *coll);
 unsigned char editAgentId(const char *oldSshId, const char *newName, const char *newSshId, AgentIdCollection *coll);
+
+void freeAgentId(AgentId *agentId);
 void freeAgentIdColl(FILE *cfgFile, AgentIdCollection *coll);
 
 void makeIfMissing(const char *path, int type);
@@ -106,6 +110,8 @@ void addPredBorder(WINDOW *win, BORDER_STYLE border, short colorPair);
 void addWTitle(WINDOW *win, wchar_t *title, short colorPair);
 void printWrappedStr(WINDOW *win, char *str, short colorPair);
 void printIds(WINDOW *win, AgentIdCollection *coll);
+
+void addSshId(AgentId *agentId);
 
 void startCurses();
 void endCurses();
@@ -126,7 +132,7 @@ int main() {
 	size_t containerCols;
 	size_t fitRows;
 	WINDOW *container;
-	WINDOW *ctrlsWin, *infoWin, *selIdWin;
+	WINDOW *ctrlsWin, *selIdWin, *infoWin;
 
 	if (fseek(cfgFile, 0, SEEK_END) == 0 && ftell(cfgFile) == 0) {
 		populateConfig(cfgFile, idColl);
@@ -147,6 +153,15 @@ int main() {
 	do {
 		clear();
 		getmaxyx(stdscr, rows, cols);
+
+		if (key == KEY_DOWN) idColl->selected++;
+		if (key == KEY_UP) idColl->selected--;
+		idColl->selected %= idColl->noIds;
+
+		if (key == ENTER_KEY) {
+			addSshId(idColl->agentIds[idColl->selected]);
+			break;
+		}
 
 		containerCols = cols / 3;
 
@@ -193,7 +208,7 @@ int main() {
 
 AgentIdCollection *genAgentIdColl() {
 	AgentIdCollection *coll = (AgentIdCollection *)calloc(1, sizeof(AgentIdCollection));
-	coll->noIds = coll->modified = coll->selected = 0;
+	coll->noIds = coll->modified =  coll->selected = 0;
 	coll->maxNameLen = coll->maxSshIdLen = 0;
 	coll->maxIds = DEFAULT_AG_ID_NO;
 	coll->agentIds = (AgentId **)calloc(coll->maxIds, sizeof(AgentId *));
@@ -228,8 +243,16 @@ unsigned char editAgentId(const char *oldSshId, const char *newName, const char 
 	if ((foundId = searchAgentId(coll, oldSshId)) == NULL) return 1;
 	assert(strlen(newName) <= ENTRY_ID_MAX && strlen(newSshId) <= ENTRY_ID_MAX);
 
-	foundId->name = newName;
-	foundId->sshId = newSshId;
+	size_t newNameLen, newSshIdLen;
+
+	newNameLen = strlen(newName); newSshIdLen = strlen(newSshId);
+
+	free(foundId->name); free(foundId->sshId);
+	foundId->name = (char *)calloc(1, newNameLen+1);
+	foundId->sshId = (char *)calloc(1, newSshIdLen+1);
+	strncpy(foundId->name, newName, newNameLen);
+	strncpy(foundId->sshId, newSshId, newSshIdLen);
+
 	updateMaxSizes(newName, newSshId, coll);
 	return 0;
 }
@@ -240,8 +263,13 @@ unsigned char addAgentId(const char *name, const char *sshId, AgentIdCollection 
 	AgentId *newAgent = (AgentId *)calloc(1, sizeof(AgentId));
 	size_t nameLen, sshIdLen;
 
-	newAgent->name = name; nameLen = strlen(name);
-	newAgent->sshId = sshId; sshIdLen = strlen(sshId);
+	nameLen = strlen(name); sshIdLen = strlen(sshId);
+	// +1 to account for \0
+	newAgent->name = (char *)calloc(1, nameLen+1);
+	newAgent->sshId = (char *)calloc(1, sshIdLen+1);
+
+	strncpy(newAgent->name, name, nameLen);
+	strncpy(newAgent->sshId, name, nameLen);
 
 	if (coll->noIds == coll->maxIds) {
 		coll->agentIds = reallocarray(coll->agentIds, coll->noIds+1, sizeof(AgentId *));
@@ -253,6 +281,12 @@ unsigned char addAgentId(const char *name, const char *sshId, AgentIdCollection 
 	return 0;
 }
 
+void freeAgentId(AgentId *agentId) {
+	free(agentId->name);
+	free(agentId->sshId);
+	free(agentId);
+}
+
 void freeAgentIdColl(FILE *cfgFile, AgentIdCollection *coll) {
 	AgentId *current;
 	unsigned char mod = coll->modified;
@@ -261,7 +295,7 @@ void freeAgentIdColl(FILE *cfgFile, AgentIdCollection *coll) {
 	for (size_t i = 0; i < coll->noIds; i++) {
 		current = coll->agentIds[i];
 		if (mod) fprintf(cfgFile, ENTRY_FORMAT_STR, current->name, current->sshId);
-		free(current);
+		freeAgentId(current);
 	}
 	free(coll);
 }
@@ -408,8 +442,8 @@ void initColorPairs() {
 	init_color(COLOR_LIGHT_BLUE, RGB_TO_CURSES(32), RGB_TO_CURSES(230), RGB_TO_CURSES(252));
 	init_color(COLOR_LIGHT_PURPLE, RGB_TO_CURSES(155), RGB_TO_CURSES(45), RGB_TO_CURSES(252));
 	init_color(COLOR_LIGHT_PINK, RGB_TO_CURSES(238), RGB_TO_CURSES(45), RGB_TO_CURSES(252));
-	init_color(COLOR_LIGHT_GREEN, RGB_TO_CURSES(113), RGB_TO_CURSES(252), RGB_TO_CURSES(85));
-	init_color(COLOR_GRAY, RGB_TO_CURSES(55), RGB_TO_CURSES(56), RGB_TO_CURSES(55));
+	init_color(COLOR_LIGHT_GREEN, RGB_TO_CURSES(113), RGB_TO_CURSES(252), RGB_TO_CURSES(115));
+	init_color(COLOR_GRAY, RGB_TO_CURSES(74), RGB_TO_CURSES(76), RGB_TO_CURSES(74));
 
 	init_pair(WHITE_PAIR, COLOR_WHITE, COLOR_BLACK);
 	init_pair(CTRLS_PAIR, COLOR_LIGHT_GREEN, COLOR_BLACK);
@@ -445,23 +479,44 @@ void printWrappedStr(WINDOW *win, char *str, short colorPair) {
 
 	availableCols = getmaxx(win) - 2; // -2 to account for borders
 
-	for (size_t i = 0; i < getmaxy(win); i++)
+	for (size_t i = 0; i < getmaxy(win)-2; i++)
 		mvwaddnstr(win, i+1, 1, str+i*availableCols, availableCols);
 }
 
 void printIds(WINDOW *win, AgentIdCollection *coll) {
-	size_t availableCols = getmaxx(win);
+	size_t availableCols = getmaxx(win)-2;
 	// -2 for the selection chars / Splits the max length of name and id in half
 	size_t textMaxLen = (availableCols - ENTRY_PADDING - 2) / 2;
+	size_t currentNameLen, currentSshIdLen;
 	AgentId *current;
 
 	for (size_t i = 0; i < coll->noIds; i++) {
 		current = coll->agentIds[i];
+		currentNameLen = strlen(current->name);
+		currentSshIdLen = strlen(current->sshId);
 		wattr_set(win, WA_NORMAL, i == coll->selected ? FOCUSED_PAIR : UNFOCUSED_PAIR, NULL);
 		mvwaddwstr(win, 1+i, 1, i == coll->selected ? FOCUSED_WCHAR : UNFOCUSED_WCHAR);
+
 		mvwaddnstr(win, 1+i, 3, current->name, textMaxLen-1);
-		if (strlen(current->name) > textMaxLen-1) waddwstr(win, ELIPSIS_WCHAR);
+		if (currentNameLen > textMaxLen-1) waddwstr(win, ELIPSIS_WCHAR);
+
+		mvwaddnstr(win, 1+i, availableCols-min(textMaxLen, currentSshIdLen)+1, current->sshId, textMaxLen-1);
+		if (currentSshIdLen > textMaxLen-1) waddwstr(win, ELIPSIS_WCHAR);
 	}
+}
+
+void addSshId(AgentId *agentId) {
+	const char *addCmdFormatStr = "ssh-add %s.ssh/%s";
+	size_t sshIdLen = strlen(agentId->sshId);
+
+	size_t homePathLen;
+	char *homePath = getHomePath(&homePathLen);
+	char *addCmdBuff = (char *)calloc(1, strlen(addCmdFormatStr) - 4 + homePathLen + sshIdLen);
+
+	sprintf(addCmdBuff, addCmdFormatStr, homePath, agentId->sshId);
+	system(addCmdBuff);
+
+	free(addCmdBuff);
 }
 
 void startCurses() {
