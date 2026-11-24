@@ -32,11 +32,19 @@
 #define COLOR_LIGHT_BLUE 	8
 #define COLOR_LIGHT_PURPLE 	9
 #define COLOR_LIGHT_PINK 	10
+#define COLOR_LIGHT_GREEN	11
+#define COLOR_GRAY			12
 
 #define WHITE_PAIR 		1
 #define CTRLS_PAIR 		2
 #define SELECT_ID_PAIR 	3
 #define INFO_PAIR 		4
+#define FOCUSED_PAIR	5
+#define UNFOCUSED_PAIR	6
+
+#define FOCUSED_WCHAR L"◉"
+#define UNFOCUSED_WCHAR L"◎"
+#define ELIPSIS_WCHAR L"…"
 
 typedef struct {
 	const char *name;
@@ -48,6 +56,7 @@ typedef struct {
 	size_t maxIds;
 	size_t maxNameLen;
 	size_t maxSshIdLen;
+	size_t selected;
 	unsigned char modified;
 	AgentId **agentIds;
 } AgentIdCollection;
@@ -66,7 +75,7 @@ const wchar_t *borderCharacters[][8] = {
 	NULL
 };
 
-typedef enum title { CTRLS_TITLE, IDS_TITLE, INFO_TITLE } WINDOW_TITLE;
+typedef enum title { CTRLS_TITLE, SELECT_ID_TITLE, INFO_TITLE } WINDOW_TITLE;
 wchar_t *windowTitles[] = {
 	L"🎮Controls",
 	L"⚉ Select ID",
@@ -95,7 +104,8 @@ size_t titlesMaxWidth();
 void initColorPairs();
 void addPredBorder(WINDOW *win, BORDER_STYLE border, short colorPair);
 void addWTitle(WINDOW *win, wchar_t *title, short colorPair);
-size_t printWrappedStr(WINDOW *win, char *str, short colorPair);
+void printWrappedStr(WINDOW *win, char *str, short colorPair);
+void printIds(WINDOW *win, AgentIdCollection *coll);
 
 void startCurses();
 void endCurses();
@@ -111,13 +121,12 @@ int main() {
 
 	int key;
 	int rows, cols;
-	int prevRows = -1, prevCols = -1;
 	size_t minCols, minRows;
 	size_t ctrlsMsgRows, infoMsgRows;
 	size_t containerCols;
 	size_t fitRows;
 	WINDOW *container;
-	WINDOW *ctrlsWin, *infoWin;
+	WINDOW *ctrlsWin, *infoWin, *selIdWin;
 
 	if (fseek(cfgFile, 0, SEEK_END) == 0 && ftell(cfgFile) == 0) {
 		populateConfig(cfgFile, idColl);
@@ -140,16 +149,16 @@ int main() {
 		getmaxyx(stdscr, rows, cols);
 
 		containerCols = cols / 3;
+
 		ctrlsMsgRows = 2 + ceil((1.0f * strlen(ctrlsMsg)) / (containerCols-2));
 		infoMsgRows = 2 + ceil((1.0f * strlen(infoMsg)) / (containerCols-2));
-		if (rows < minRows || containerCols < minCols) {
+
+		fitRows = minRows + ctrlsMsgRows + infoMsgRows;
+
+		if (rows < fitRows || containerCols < minCols) {
 			printw("Not enough space.");
 			continue;
 		}
-
-		fitRows =
-			2 + idColl->noIds
-			+ ctrlsMsgRows + infoMsgRows;
 
 		container = subwin(
 			stdscr,
@@ -158,11 +167,16 @@ int main() {
 		);
 
 		ctrlsWin = derwin(container, ctrlsMsgRows, containerCols, 0, 0);
-		ctrlsMsgRows = printWrappedStr(ctrlsWin, (char *) ctrlsMsg, WHITE_PAIR);
+		printWrappedStr(ctrlsWin, (char *) ctrlsMsg, WHITE_PAIR);
 		addPredBorder(ctrlsWin, ROUNDED, CTRLS_PAIR);
 		addWTitle(ctrlsWin, windowTitles[CTRLS_TITLE], CTRLS_PAIR);
 
-		infoWin = derwin(container, infoMsgRows, containerCols, ctrlsMsgRows, 0);
+		selIdWin = derwin(container, minRows, containerCols, ctrlsMsgRows, 0);
+		printIds(selIdWin, idColl);
+		addPredBorder(selIdWin, DECORATED_ROUNDED, SELECT_ID_PAIR);
+		addWTitle(selIdWin, windowTitles[SELECT_ID_TITLE], SELECT_ID_PAIR);
+
+		infoWin = derwin(container, infoMsgRows, containerCols, ctrlsMsgRows+minRows, 0);
 		printWrappedStr(infoWin, infoMsg, WHITE_PAIR);
 		addPredBorder(infoWin, ROUNDED, INFO_PAIR);
 		addWTitle(infoWin, windowTitles[INFO_TITLE], INFO_PAIR);
@@ -179,7 +193,7 @@ int main() {
 
 AgentIdCollection *genAgentIdColl() {
 	AgentIdCollection *coll = (AgentIdCollection *)calloc(1, sizeof(AgentIdCollection));
-	coll->noIds = coll->modified = 0;
+	coll->noIds = coll->modified = coll->selected = 0;
 	coll->maxNameLen = coll->maxSshIdLen = 0;
 	coll->maxIds = DEFAULT_AG_ID_NO;
 	coll->agentIds = (AgentId **)calloc(coll->maxIds, sizeof(AgentId *));
@@ -394,11 +408,15 @@ void initColorPairs() {
 	init_color(COLOR_LIGHT_BLUE, RGB_TO_CURSES(32), RGB_TO_CURSES(230), RGB_TO_CURSES(252));
 	init_color(COLOR_LIGHT_PURPLE, RGB_TO_CURSES(155), RGB_TO_CURSES(45), RGB_TO_CURSES(252));
 	init_color(COLOR_LIGHT_PINK, RGB_TO_CURSES(238), RGB_TO_CURSES(45), RGB_TO_CURSES(252));
+	init_color(COLOR_LIGHT_GREEN, RGB_TO_CURSES(113), RGB_TO_CURSES(252), RGB_TO_CURSES(85));
+	init_color(COLOR_GRAY, RGB_TO_CURSES(55), RGB_TO_CURSES(56), RGB_TO_CURSES(55));
 
 	init_pair(WHITE_PAIR, COLOR_WHITE, COLOR_BLACK);
-	init_pair(CTRLS_PAIR, COLOR_LIGHT_BLUE, COLOR_BLACK);
+	init_pair(CTRLS_PAIR, COLOR_LIGHT_GREEN, COLOR_BLACK);
 	init_pair(SELECT_ID_PAIR, COLOR_LIGHT_PURPLE, COLOR_BLACK);
 	init_pair(INFO_PAIR, COLOR_LIGHT_PINK, COLOR_BLACK);
+	init_pair(FOCUSED_PAIR, COLOR_LIGHT_BLUE, COLOR_BLACK);
+	init_pair(UNFOCUSED_PAIR, COLOR_GRAY, COLOR_BLACK);
 }
 
 void addPredBorder(WINDOW *win, BORDER_STYLE border, short colorPair) {
@@ -419,22 +437,31 @@ void addWTitle(WINDOW *win, wchar_t *title, short colorPair) {
 	mvwaddwstr(win, 0, 1, title);
 }
 
-size_t printWrappedStr(WINDOW *win, char *str, short colorPair) {
+void printWrappedStr(WINDOW *win, char *str, short colorPair) {
 	colorPair = colorPair == -1 ? WHITE_PAIR : colorPair;
 	wattr_set(win, WA_NORMAL, colorPair, NULL);
 
-	size_t availableCols, winRows;
-	size_t contentRows;
-	int y, x;
+	size_t availableCols;
 
-	getmaxyx(win, winRows, availableCols);
-	availableCols -= 2; // -2 to account for borders
-	contentRows = ceil((1.0f * strlen(str)) / availableCols);
+	availableCols = getmaxx(win) - 2; // -2 to account for borders
 
-	for (size_t i = 0; i < contentRows; i++)
+	for (size_t i = 0; i < getmaxy(win); i++)
 		mvwaddnstr(win, i+1, 1, str+i*availableCols, availableCols);
+}
 
-	return contentRows+2;
+void printIds(WINDOW *win, AgentIdCollection *coll) {
+	size_t availableCols = getmaxx(win);
+	// -2 for the selection chars / Splits the max length of name and id in half
+	size_t textMaxLen = (availableCols - ENTRY_PADDING - 2) / 2;
+	AgentId *current;
+
+	for (size_t i = 0; i < coll->noIds; i++) {
+		current = coll->agentIds[i];
+		wattr_set(win, WA_NORMAL, i == coll->selected ? FOCUSED_PAIR : UNFOCUSED_PAIR, NULL);
+		mvwaddwstr(win, 1+i, 1, i == coll->selected ? FOCUSED_WCHAR : UNFOCUSED_WCHAR);
+		mvwaddnstr(win, 1+i, 3, current->name, textMaxLen-1);
+		if (strlen(current->name) > textMaxLen-1) waddwstr(win, ELIPSIS_WCHAR);
+	}
 }
 
 void startCurses() {
