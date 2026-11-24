@@ -95,7 +95,7 @@ size_t titlesMaxWidth();
 void initColorPairs();
 void addPredBorder(WINDOW *win, BORDER_STYLE border, short colorPair);
 void addWTitle(WINDOW *win, wchar_t *title, short colorPair);
-void printWrappedStr(WINDOW **win, WINDOW *container, char *str, short colorPair);
+size_t printWrappedStr(WINDOW *win, char *str, short colorPair);
 
 void startCurses();
 void endCurses();
@@ -117,7 +117,7 @@ int main() {
 	size_t containerCols;
 	size_t fitRows;
 	WINDOW *container;
-	WINDOW *ctrlsWin;
+	WINDOW *ctrlsWin, *infoWin;
 
 	if (fseek(cfgFile, 0, SEEK_END) == 0 && ftell(cfgFile) == 0) {
 		populateConfig(cfgFile, idColl);
@@ -140,8 +140,8 @@ int main() {
 		getmaxyx(stdscr, rows, cols);
 
 		containerCols = cols / 3;
-		ctrlsMsgRows = 2 + ceil((1.0f * strlen(ctrlsMsg)) / containerCols);
-		infoMsgRows = 2 + ceil((1.0f * strlen(infoMsg)) / containerCols);
+		ctrlsMsgRows = 2 + ceil((1.0f * strlen(ctrlsMsg)) / (containerCols-2));
+		infoMsgRows = 2 + ceil((1.0f * strlen(infoMsg)) / (containerCols-2));
 		if (rows < minRows || containerCols < minCols) {
 			printw("Not enough space.");
 			continue;
@@ -158,11 +158,14 @@ int main() {
 		);
 
 		ctrlsWin = derwin(container, ctrlsMsgRows, containerCols, 0, 0);
-		printWrappedStr(&ctrlsWin, container, (char *) ctrlsMsg, WHITE_PAIR);
+		ctrlsMsgRows = printWrappedStr(ctrlsWin, (char *) ctrlsMsg, WHITE_PAIR);
 		addPredBorder(ctrlsWin, ROUNDED, CTRLS_PAIR);
 		addWTitle(ctrlsWin, windowTitles[CTRLS_TITLE], CTRLS_PAIR);
 
-		infoWin =
+		infoWin = derwin(container, infoMsgRows, containerCols, ctrlsMsgRows, 0);
+		printWrappedStr(infoWin, infoMsg, WHITE_PAIR);
+		addPredBorder(infoWin, ROUNDED, INFO_PAIR);
+		addWTitle(infoWin, windowTitles[INFO_TITLE], INFO_PAIR);
 
 		refresh();
 	} while((key = getch()) != 'q');
@@ -416,27 +419,22 @@ void addWTitle(WINDOW *win, wchar_t *title, short colorPair) {
 	mvwaddwstr(win, 0, 1, title);
 }
 
-void printWrappedStr(WINDOW **win, WINDOW *container, char *str, short colorPair) {
+size_t printWrappedStr(WINDOW *win, char *str, short colorPair) {
 	colorPair = colorPair == -1 ? WHITE_PAIR : colorPair;
-	wattr_set(*win, WA_NORMAL, colorPair, NULL);
+	wattr_set(win, WA_NORMAL, colorPair, NULL);
 
 	size_t availableCols, winRows;
 	size_t contentRows;
 	int y, x;
 
-	getmaxyx(*win, winRows, availableCols);
+	getmaxyx(win, winRows, availableCols);
 	availableCols -= 2; // -2 to account for borders
 	contentRows = ceil((1.0f * strlen(str)) / availableCols);
 
-	getparyx(*win, y, x);
-
-	if (contentRows+2 > winRows) {
-		delwin(*win);
-		*win = derwin(container, contentRows+2, availableCols+2, y, x);
-	}
-
 	for (size_t i = 0; i < contentRows; i++)
-		mvwaddnstr(*win, i+1, 1, str+i*availableCols, availableCols);
+		mvwaddnstr(win, i+1, 1, str+i*availableCols, availableCols);
+
+	return contentRows+2;
 }
 
 void startCurses() {
