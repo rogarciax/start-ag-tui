@@ -1,9 +1,13 @@
-#include <ncurses.h>
+#define _XOPEN_SOURCE_EXTENDED
+#include <ncursesw/ncurses.h>
+#include <wchar.h>
 #include <dirent.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <locale.h>
 #include <string.h>
 #include <assert.h>
+#include <math.h>
 
 // Macro defined at: https://github.com/mcdaniel/curses_tutorial#colors
 #define RGB_TO_CURSES(x) ((int)((float)x*3.90625))  // 1000/256 conversion
@@ -13,6 +17,26 @@
 #define DEFAULT_AG_ID_NO 3
 #define ENTRY_FORMAT_STR "%s:%s\n"
 #define ENTRY_ID_MAX 256
+
+#define ENTRY_PADDING 5
+
+#define LEFT_SIDE 			0
+#define RIGHT_SIDE 			1
+#define TOP_SIDE 			2
+#define BOTTOM_SIDE 		3
+#define TOP_LEFT_CORNER 	4
+#define TOP_RIGHT_CORNER 	5
+#define BOTTOM_LEFT_CORNER 	6
+#define BOTTOM_RIGHT_CORNER 7
+
+#define COLOR_LIGHT_BLUE 	8
+#define COLOR_LIGHT_PURPLE 	9
+#define COLOR_LIGHT_PINK 	10
+
+#define WHITE_PAIR 		1
+#define CTRLS_PAIR 		2
+#define SELECT_ID_PAIR 	3
+#define INFO_PAIR 		4
 
 typedef struct {
 	const char *name;
@@ -35,6 +59,21 @@ const char *sshIgnoreMapSize[SSH_IGNORE_MAP_SIZE] = {
 	"known_hosts.old"
 };
 
+typedef enum wstyle { ROUNDED, DECORATED_ROUNDED } BORDER_STYLE;
+const wchar_t *borderCharacters[][8] = {
+	{ L"│", L"│", L"─", L"─", L"╭", L"╮", L"╰", L"╯" },
+	{ L"│", L"│", L"═", L"═", L"╭", L"╮", L"╰", L"╯" },
+	NULL
+};
+
+typedef enum title { CTRLS_TITLE, IDS_TITLE, INFO_TITLE } WINDOW_TITLE;
+wchar_t *windowTitles[] = {
+	L"🎮Controls",
+	L"⚉ Select ID",
+	L"🛈 Info",
+	NULL
+};
+
 AgentIdCollection *genAgentIdColl();
 AgentId *searchAgentId(AgentIdCollection *coll, const char *sshId);
 void updateMaxSizes(const char *newName, const char *newSshId, AgentIdCollection *coll);
@@ -49,34 +88,89 @@ char *getCfgPath();
 unsigned char populateConfig(FILE *cfgFile, AgentIdCollection *coll);
 unsigned char parseConfig(FILE *cfgFile, AgentIdCollection *coll);
 
+int min(int a, int b);
+
+size_t titlesMaxWidth();
+
+void initColorPairs();
+void addPredBorder(WINDOW *win, BORDER_STYLE border, short colorPair);
+void addWTitle(WINDOW *win, wchar_t *title, short colorPair);
+void printWrappedStr(WINDOW **win, WINDOW *container, char *str, short colorPair);
+
+void startCurses();
+void endCurses();
+
 int main() {
+	startCurses();
 	char *cfgPath = getCfgPath();
 	size_t cfgPathLen = strlen(cfgPath);
 	FILE *cfgFile = fopen(cfgPath, "a+");
 	
 	AgentIdCollection *idColl = genAgentIdColl();
-	char *initMsg = (char *)calloc(1, 1024);
+	char *infoMsg = (char *)calloc(1, 1024);
 
-	WINDOW *idSelectionWin;
+	int key;
+	int rows, cols;
+	int prevRows = -1, prevCols = -1;
+	size_t minCols, minRows;
+	size_t ctrlsMsgRows, infoMsgRows;
+	size_t containerCols;
+	size_t fitRows;
+	WINDOW *container;
+	WINDOW *ctrlsWin;
 
-	// TUI to inform the user that the config
-	// file has been populated with the default
-	// configuration.
 	if (fseek(cfgFile, 0, SEEK_END) == 0 && ftell(cfgFile) == 0) {
 		populateConfig(cfgFile, idColl);
-		strncpy(initMsg, "Populated config file with default values at: ", 47);
+		strncpy(infoMsg, "Populated config file with default values at: ", 47);
 	}
 	rewind(cfgFile);
 
 	if (idColl->noIds == 0) {
 		parseConfig(cfgFile, idColl);
-		strncpy(initMsg, "Loaded found ssh ids at: ", 26);
+		strncpy(infoMsg, "Loaded found ssh ids at: ", 26);
 	}
-	strncat(initMsg, cfgPath, cfgPathLen);
+	strncat(infoMsg, cfgPath, cfgPathLen);
+
+	const char *ctrlsMsg = "Move UP/DOWN, select ENTER, quit Q";
+	minCols = titlesMaxWidth() + ENTRY_PADDING;
+	minRows = 2 + idColl->noIds; // Temp implementation assuming 2/3 agents (+2 for borders)
+
+	do {
+		clear();
+		getmaxyx(stdscr, rows, cols);
+
+		containerCols = cols / 3;
+		ctrlsMsgRows = 2 + ceil((1.0f * strlen(ctrlsMsg)) / containerCols);
+		infoMsgRows = 2 + ceil((1.0f * strlen(infoMsg)) / containerCols);
+		if (rows < minRows || containerCols < minCols) {
+			printw("Not enough space.");
+			continue;
+		}
+
+		fitRows =
+			2 + idColl->noIds
+			+ ctrlsMsgRows + infoMsgRows;
+
+		container = subwin(
+			stdscr,
+			fitRows, containerCols,
+			rows / 2 - fitRows / 2, cols / 2 - containerCols / 2
+		);
+
+		ctrlsWin = derwin(container, ctrlsMsgRows, containerCols, 0, 0);
+		printWrappedStr(&ctrlsWin, container, (char *) ctrlsMsg, WHITE_PAIR);
+		addPredBorder(ctrlsWin, ROUNDED, CTRLS_PAIR);
+		addWTitle(ctrlsWin, windowTitles[CTRLS_TITLE], CTRLS_PAIR);
+
+		infoWin =
+
+		refresh();
+	} while((key = getch()) != 'q');
 
 	freeAgentIdColl(cfgFile, idColl);
 	free(cfgPath);
 	fclose(cfgFile);
+	endCurses();
 	return 0;
 }
 
@@ -278,4 +372,82 @@ unsigned char parseConfig(FILE *cfgFile, AgentIdCollection *coll) {
 
 	free(line);
 	return 0;
+}
+
+int min(int a, int b) { return a < b ? a : b; }
+
+size_t titlesMaxWidth() {
+	size_t maxLen = wcslen(*windowTitles), currentLen;
+
+	for (size_t i = 1; windowTitles[i] != NULL; i++) {
+		currentLen = wcslen(windowTitles[i]);
+		if (currentLen > maxLen) maxLen = currentLen;
+	}
+
+	return maxLen;
+}
+
+void initColorPairs() {
+	init_color(COLOR_LIGHT_BLUE, RGB_TO_CURSES(32), RGB_TO_CURSES(230), RGB_TO_CURSES(252));
+	init_color(COLOR_LIGHT_PURPLE, RGB_TO_CURSES(155), RGB_TO_CURSES(45), RGB_TO_CURSES(252));
+	init_color(COLOR_LIGHT_PINK, RGB_TO_CURSES(238), RGB_TO_CURSES(45), RGB_TO_CURSES(252));
+
+	init_pair(WHITE_PAIR, COLOR_WHITE, COLOR_BLACK);
+	init_pair(CTRLS_PAIR, COLOR_LIGHT_BLUE, COLOR_BLACK);
+	init_pair(SELECT_ID_PAIR, COLOR_LIGHT_PURPLE, COLOR_BLACK);
+	init_pair(INFO_PAIR, COLOR_LIGHT_PINK, COLOR_BLACK);
+}
+
+void addPredBorder(WINDOW *win, BORDER_STYLE border, short colorPair) {
+	cchar_t ls, rs, bs, ts, tl, tr, bl, br;
+	setcchar(&ls, borderCharacters[border][LEFT_SIDE], WA_NORMAL, colorPair, NULL);
+	setcchar(&rs, borderCharacters[border][RIGHT_SIDE], WA_NORMAL, colorPair, NULL);
+	setcchar(&ts, borderCharacters[border][TOP_SIDE], WA_NORMAL, colorPair, NULL);
+	setcchar(&bs, borderCharacters[border][BOTTOM_SIDE], WA_NORMAL, colorPair, NULL);
+	setcchar(&tl, borderCharacters[border][TOP_LEFT_CORNER], WA_NORMAL, colorPair, NULL);
+	setcchar(&tr, borderCharacters[border][TOP_RIGHT_CORNER], WA_NORMAL, colorPair, NULL);
+	setcchar(&bl, borderCharacters[border][BOTTOM_LEFT_CORNER], WA_NORMAL, colorPair, NULL);
+	setcchar(&br, borderCharacters[border][BOTTOM_RIGHT_CORNER], WA_NORMAL, colorPair, NULL);
+	wborder_set(win, &ls, &rs, &ts, &bs, &tl, &tr, &bl, &br);
+}
+
+void addWTitle(WINDOW *win, wchar_t *title, short colorPair) {
+	wattr_set(win, WA_NORMAL, colorPair, NULL);
+	mvwaddwstr(win, 0, 1, title);
+}
+
+void printWrappedStr(WINDOW **win, WINDOW *container, char *str, short colorPair) {
+	colorPair = colorPair == -1 ? WHITE_PAIR : colorPair;
+	wattr_set(*win, WA_NORMAL, colorPair, NULL);
+
+	size_t availableCols, winRows;
+	size_t contentRows;
+	int y, x;
+
+	getmaxyx(*win, winRows, availableCols);
+	availableCols -= 2; // -2 to account for borders
+	contentRows = ceil((1.0f * strlen(str)) / availableCols);
+
+	getparyx(*win, y, x);
+
+	if (contentRows+2 > winRows) {
+		delwin(*win);
+		*win = derwin(container, contentRows+2, availableCols+2, y, x);
+	}
+
+	for (size_t i = 0; i < contentRows; i++)
+		mvwaddnstr(*win, i+1, 1, str+i*availableCols, availableCols);
+}
+
+void startCurses() {
+	setlocale(LC_ALL, "en_US.UTF-8");
+	initscr();
+	cbreak(); noecho(); keypad(stdscr, true);
+	start_color();
+	initColorPairs();
+	curs_set(0);
+}
+
+void endCurses() {
+	endwin();
 }
